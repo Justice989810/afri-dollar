@@ -12,7 +12,8 @@ import { createWalletSchema, deleteWalletSchema } from '../utils/validation';
 
 const walletRouter = Router();
 
-// Apply authentication to all wallet routes
+// Apply IP rate limiting before authentication so unauthenticated requests are limited
+walletRouter.use(ipPreAuthRateLimiter);
 walletRouter.use(authMiddleware);
 
 /**

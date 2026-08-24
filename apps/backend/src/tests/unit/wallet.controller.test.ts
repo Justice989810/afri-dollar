@@ -188,14 +188,13 @@ describe('WalletController', () => {
   describe('delete', () => {
     it('should delete/archive wallet with 200', async () => {
       mockReq.params = { id: 'wallet-1' };
-      mockReq.body = { password: 'secretpassword', confirm: true };
+      mockReq.body = { password: 'secretpassword' };
       mockDeleteWallet.mockResolvedValue(undefined);
 
       await WalletController.delete(mockReq as AuthRequest, mockRes as Response);
 
       expect(mockDeleteWallet).toHaveBeenCalledWith('wallet-1', 'user-1', {
         password: 'secretpassword',
-        confirm: true,
       });
       expect(statusMock).toHaveBeenCalledWith(200);
       expect(jsonMock).toHaveBeenCalledWith({

@@ -45,9 +45,7 @@ export interface WalletTransaction {
 }
 
 export interface DeleteWalletRequest {
-  password?: string;
-  twoFactorToken?: string;
-  confirm?: boolean;
+  password: string;
 }
 
 export interface CreateWalletOptions {

@@ -2,6 +2,7 @@
 import type { Server } from 'http';
 
 import prisma from '../../config/database';
+import { WalletService } from '../../services/wallet.service';
 
 jest.mock('../../middleware/auth.middleware', () => ({
   ...jest.requireActual('../../middleware/auth.middleware'),
@@ -89,6 +90,7 @@ describe('Wallet routes (integration)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    WalletService.clearCacheForTesting();
   });
 
   describe('POST /api/v1/wallet', () => {
@@ -212,6 +214,24 @@ describe('Wallet routes (integration)', () => {
     });
   });
 
+  describe('GET /api/v1/wallet/:id/transactions', () => {
+    it('should return transactions with 200', async () => {
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-1',
+        userId: 'user-1',
+        publicKey: 'GABC1',
+        isActive: true,
+      });
+
+      const response = await fetch(`${baseUrl}/api/v1/wallet/wallet-1/transactions?limit=10`);
+
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(json.success).toBe(true);
+      expect(Array.isArray(json.data)).toBe(true);
+    });
+  });
+
   describe('DELETE /api/v1/wallet/:id', () => {
     it('should soft delete wallet when balance is zero', async () => {
       mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hash' });
@@ -224,19 +244,76 @@ describe('Wallet routes (integration)', () => {
       });
       mockLoadAccount.mockResolvedValue({
         balances: [{ asset_type: 'native', balance: '0.0000000' }],
+        subentry_count: 0,
       });
       mockWalletUpdate.mockResolvedValue({ id: 'wallet-1', isActive: false });
 
       const response = await fetch(`${baseUrl}/api/v1/wallet/wallet-1`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: 'correctpassword', confirm: true }),
+        body: JSON.stringify({ password: 'correctpassword' }),
       });
 
       expect(response.status).toBe(200);
       const json = await response.json();
       expect(json.success).toBe(true);
       expect(json.message).toBe('Wallet archived successfully');
+    });
+
+    it('should return 404 when wallet belongs to another user', async () => {
+      mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hash' });
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-other',
+        userId: 'user-2',
+        publicKey: 'GABC2',
+        walletType: 'business',
+        isActive: true,
+      });
+
+      const response = await fetch(`${baseUrl}/api/v1/wallet/wallet-other`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'correctpassword' }),
+      });
+
+      expect(response.status).toBe(404);
+    });
+
+    it('should return 400 when password is missing', async () => {
+      const response = await fetch(`${baseUrl}/api/v1/wallet/wallet-1`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      expect(response.status).toBe(400);
+      const json = await response.json();
+      expect(json.success).toBe(false);
+    });
+
+    it('should return 400 when wallet has non-zero spendable balance', async () => {
+      mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hash' });
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-1',
+        userId: 'user-1',
+        publicKey: 'GABC1',
+        walletType: 'business',
+        isActive: true,
+      });
+      mockLoadAccount.mockResolvedValue({
+        balances: [{ asset_type: 'native', balance: '100.0000000' }],
+        subentry_count: 0,
+      });
+
+      const response = await fetch(`${baseUrl}/api/v1/wallet/wallet-1`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'correctpassword' }),
+      });
+
+      expect(response.status).toBe(400);
+      const json = await response.json();
+      expect(json.success).toBe(false);
     });
   });
 });

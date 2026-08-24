@@ -78,6 +78,15 @@ const swaggerOptions: Options = {
             },
           },
         },
+        Pagination: {
+          type: 'object',
+          properties: {
+            total: { type: 'integer', example: 10 },
+            page: { type: 'integer', example: 1 },
+            limit: { type: 'integer', example: 20 },
+            totalPages: { type: 'integer', example: 1 },
+          },
+        },
         WebhookConfig: {
           type: 'object',
           properties: {
@@ -1626,10 +1635,9 @@ const swaggerOptions: Options = {
               'application/json': {
                 schema: {
                   type: 'object',
+                  required: ['password'],
                   properties: {
-                    password: { type: 'string' },
-                    twoFactorToken: { type: 'string' },
-                    confirm: { type: 'boolean' },
+                    password: { type: 'string', description: 'User password for confirmation' },
                   },
                 },
               },
@@ -2769,6 +2777,7 @@ const swaggerOptions: Options = {
                           'transaction.completed',
                           'transaction.failed',
                           'wallet.created',
+                          'wallet.archived',
                           'payroll.processed',
                           'kyc.approved',
                           'kyc.rejected',

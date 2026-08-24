@@ -42,15 +42,9 @@ export const walletTransactionsQuerySchema = z.object({
   cursor: z.string().optional(),
 });
 
-export const deleteWalletSchema = z
-  .object({
-    password: z.string().optional(),
-    twoFactorToken: z.string().optional(),
-    confirm: z.boolean().optional(),
-  })
-  .refine((data) => Boolean(data.password || data.twoFactorToken), {
-    message: 'Password or 2FA token is required for confirmation',
-  });
+export const deleteWalletSchema = z.object({
+  password: z.string().min(1, 'Password is required for confirmation'),
+});
 
 export const createPaymentSchema = z.object({
   toAddress: z.string().length(56, 'Invalid Stellar address'),

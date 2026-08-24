@@ -22,6 +22,12 @@ import { AuthService } from './auth.service';
 import { StellarService } from './stellar.service';
 import { WebhookService } from './webhook.service';
 
+function parseStellarStroops(amount: string): bigint {
+  const [whole = '0', frac = ''] = amount.split('.');
+  const paddedFrac = frac.padEnd(7, '0').slice(0, 7);
+  return BigInt(whole || '0') * 10_000_000n + BigInt(paddedFrac);
+}
+
 type RedisClient = ReturnType<typeof createClient>;
 let redisClient: RedisClient | null = null;
 let redisConnectPromise: Promise<RedisClient | null> | null = null;
@@ -37,24 +43,38 @@ async function getRedisClient(): Promise<RedisClient | null> {
   }
 
   if (!redisConnectPromise) {
-    redisConnectPromise = (async (): Promise<RedisClient | null> => {
+    const connectPromise = (async (): Promise<RedisClient | null> => {
+      let client: RedisClient | null = null;
       try {
-        const client = createClient({ url: process.env.REDIS_URL });
+        client = createClient({ url: process.env.REDIS_URL });
         client.on('error', (err) => {
           console.error('Redis wallet cache error:', err);
-          redisClient = null;
-          redisConnectPromise = null;
+          if (redisClient === client) {
+            redisClient = null;
+          }
+          if (redisConnectPromise === connectPromise) {
+            redisConnectPromise = null;
+          }
+          client?.disconnect().catch(() => {});
         });
         await client.connect();
         redisClient = client;
         return client;
       } catch (error) {
         console.error('Redis wallet cache unavailable, using memory fallback:', error);
-        redisClient = null;
-        redisConnectPromise = null;
+        if (client) {
+          client.disconnect().catch(() => {});
+        }
+        if (redisClient === client) {
+          redisClient = null;
+        }
+        if (redisConnectPromise === connectPromise) {
+          redisConnectPromise = null;
+        }
         return null;
       }
     })();
+    redisConnectPromise = connectPromise;
   }
 
   return redisConnectPromise;
@@ -284,14 +304,6 @@ export const WalletService = {
       }
     }
 
-    await AuditService.log({
-      action: 'wallet.viewed',
-      resource: 'wallet',
-      resourceId: wallet.id,
-      userId,
-      metadata: { walletType: wallet.walletType, network: wallet.network },
-    });
-
     return {
       id: wallet.id,
       userId: wallet.userId,
@@ -321,13 +333,6 @@ export const WalletService = {
     const cacheKey = getBalanceCacheKey(walletId);
     const cached = await getFromCache<WalletBalance[]>(cacheKey);
     if (cached) {
-      await AuditService.log({
-        action: 'wallet.balances.viewed',
-        resource: 'wallet',
-        resourceId: wallet.id,
-        userId,
-        metadata: { cached: true },
-      });
       return cached;
     }
 
@@ -369,25 +374,13 @@ export const WalletService = {
       if (isNotFound) {
         balances = [];
       } else {
-        throw new AppError(
-          502,
-          `Failed to fetch account balances from Stellar: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+        console.error('Stellar getWalletBalances error:', error);
+        throw new AppError(502, 'Failed to fetch account balances from Stellar');
       }
     }
 
     // Cache balance for 30 seconds
     await setToCache(cacheKey, balances, 30);
-
-    await AuditService.log({
-      action: 'wallet.balances.viewed',
-      resource: 'wallet',
-      resourceId: wallet.id,
-      userId,
-      metadata: { cached: false, count: balances.length },
-    });
 
     return balances;
   },
@@ -412,16 +405,43 @@ export const WalletService = {
     try {
       const rawRecords = await StellarService.getAccountTransactions(wallet.publicKey, options);
 
-      return rawRecords.map((tx) => ({
-        id: tx.id,
-        createdAt: new Date(tx.created_at),
-        type: 'payment',
-        successful: tx.successful,
-        feeCharged: tx.fee_charged !== undefined ? String(tx.fee_charged) : undefined,
-        memo: tx.memo,
-        memoType: tx.memo_type,
-        paging_token: tx.paging_token,
-      }));
+      return rawRecords.map((record) => {
+        const extra = record as unknown as Record<string, unknown>;
+        const typeStr = typeof extra.type === 'string' ? extra.type : 'payment';
+        const amountStr =
+          typeof extra.amount === 'string' || typeof extra.amount === 'number'
+            ? String(extra.amount)
+            : undefined;
+        const assetStr =
+          typeof extra.asset === 'string'
+            ? extra.asset
+            : typeof extra.asset_code === 'string'
+              ? extra.asset_code
+              : undefined;
+        const counterpartyStr =
+          typeof extra.counterparty === 'string'
+            ? extra.counterparty
+            : typeof extra.to === 'string'
+              ? extra.to
+              : typeof extra.from === 'string'
+                ? extra.from
+                : undefined;
+
+        const result: WalletTransaction = {
+          id: record.id,
+          createdAt: new Date(record.created_at),
+          type: typeStr,
+          successful: Boolean(record.successful),
+          feeCharged: record.fee_charged !== undefined ? String(record.fee_charged) : undefined,
+          memo: typeof record.memo === 'string' ? record.memo : undefined,
+          memoType: typeof record.memo_type === 'string' ? record.memo_type : undefined,
+          paging_token: record.paging_token,
+        };
+        if (amountStr !== undefined) result.amount = amountStr;
+        if (assetStr !== undefined) result.asset = assetStr;
+        if (counterpartyStr !== undefined) result.counterparty = counterpartyStr;
+        return result;
+      });
     } catch (error: unknown) {
       const err = error as Record<string, unknown>;
       const isNotFound =
@@ -437,19 +457,15 @@ export const WalletService = {
       }
 
       if (error instanceof AppError) throw error;
-      throw new AppError(
-        502,
-        `Failed to fetch account transactions: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
+      console.error('Stellar getWalletTransactions error:', error);
+      throw new AppError(502, 'Failed to fetch account transactions');
     }
   },
 
   /**
    * Soft-deletes a wallet (sets status = 'archived' / isActive = false in DB).
-   * Prevents deletion if wallet has non-zero balance on Stellar Horizon.
-   * Requires password confirmation or 2FA token.
+   * Prevents deletion if wallet has spendable non-zero balance on Stellar Horizon.
+   * Requires password confirmation.
    */
   async deleteWallet(
     walletId: string,
@@ -464,21 +480,16 @@ export const WalletService = {
       throw new AppError(404, 'User not found');
     }
 
-    if (confirmation.password) {
-      if (!user.passwordHash) {
-        throw new AppError(400, 'User password is not set');
-      }
-      const isMatch = await AuthService.verifyPassword(confirmation.password, user.passwordHash);
-      if (!isMatch) {
-        throw new AppError(400, 'Invalid password confirmation');
-      }
-    } else if (confirmation.twoFactorToken) {
-      // Placeholder for future 2FA token verification
-      if (confirmation.twoFactorToken.length < 6) {
-        throw new AppError(400, 'Invalid 2FA token');
-      }
-    } else {
-      throw new AppError(400, 'Password or 2FA token confirmation is required');
+    if (!confirmation.password) {
+      throw new AppError(400, 'Password confirmation is required');
+    }
+
+    if (!user.passwordHash) {
+      throw new AppError(400, 'User password is not set');
+    }
+    const isMatch = await AuthService.verifyPassword(confirmation.password, user.passwordHash);
+    if (!isMatch) {
+      throw new AppError(400, 'Invalid password confirmation');
     }
 
     const wallet = await prisma.wallet.findUnique({
@@ -494,12 +505,19 @@ export const WalletService = {
       const horizonServer = StellarService.getHorizonServer();
       const account = await horizonServer.loadAccount(wallet.publicKey);
 
-      const hasBalance = account.balances.some((b) => {
-        const val = parseFloat(b.balance);
-        return !isNaN(val) && val > 0;
+      // Base reserve on Stellar is (2 + subentry_count) * 0.5 XLM (1.0 XLM min)
+      const subentries = Number((account as Record<string, unknown>).subentry_count ?? 0);
+      const minReserveStroops = BigInt(2 + subentries) * 5_000_000n;
+
+      const hasSpendableBalance = account.balances.some((b) => {
+        const balanceStroops = parseStellarStroops(b.balance);
+        if (b.asset_type === 'native') {
+          return balanceStroops > minReserveStroops;
+        }
+        return balanceStroops > 0n;
       });
 
-      if (hasBalance) {
+      if (hasSpendableBalance) {
         throw new AppError(
           400,
           'WALLET_HAS_BALANCE: Wallet has a non-zero balance. Please transfer all funds before deleting.'
@@ -517,12 +535,8 @@ export const WalletService = {
         (err.response as Record<string, unknown>)?.status === 404;
 
       if (!isNotFound) {
-        throw new AppError(
-          502,
-          `Failed to verify wallet balance on Stellar: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+        console.error('Stellar verify balance error in deleteWallet:', error);
+        throw new AppError(502, 'Failed to verify wallet balance on Stellar');
       }
       // Account not found on Horizon means 0 balance / unfunded account, safe to delete.
     }

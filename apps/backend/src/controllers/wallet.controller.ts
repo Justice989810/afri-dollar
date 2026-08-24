@@ -33,17 +33,11 @@ function handleError(res: Response, error: unknown): void {
     return;
   }
 
-  if (error instanceof Error) {
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Internal server error',
-    });
-    return;
-  }
+  console.error('Unhandled wallet controller error:', error);
 
   res.status(500).json({
     success: false,
-    error: 'An unknown error occurred',
+    error: 'Internal server error',
   });
 }
 

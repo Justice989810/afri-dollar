@@ -99,6 +99,7 @@ describe('WalletService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.REDIS_URL;
     WalletService.clearCacheForTesting();
 
     (Keypair.random as jest.Mock).mockReturnValue({
@@ -288,9 +289,6 @@ describe('WalletService', () => {
         updatedAt: now,
         lastKnownBalance: '100.50',
       });
-      expect(AuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'wallet.viewed', resourceId: 'wallet-1' })
-      );
     });
 
     it('should throw 404 when wallet is not found or not owned by user', async () => {
@@ -364,9 +362,6 @@ describe('WalletService', () => {
           limit: '10000.0000000',
         },
       ]);
-      expect(AuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'wallet.balances.viewed' })
-      );
     });
 
     it('should return cached balances without querying Horizon on cache hit', async () => {
@@ -436,11 +431,26 @@ describe('WalletService', () => {
         {
           id: 'tx-1',
           created_at: '2026-01-01T12:00:00Z',
+          type: 'payment',
           successful: true,
           fee_charged: 100,
           memo: 'test memo',
           memo_type: 'text',
           paging_token: '12345',
+          amount: '50.0000000',
+          asset: 'XLM',
+          counterparty: 'GBXYZ123',
+        },
+        {
+          id: 'tx-2',
+          created_at: '2026-01-02T12:00:00Z',
+          type: 'create_account',
+          successful: true,
+          fee_charged: 100,
+          paging_token: '12346',
+          amount: '10000.0000000',
+          asset: 'native',
+          from: 'GBFRIENDBOT',
         },
       ]);
 
@@ -448,7 +458,7 @@ describe('WalletService', () => {
         limit: 20,
       });
 
-      expect(txs).toHaveLength(1);
+      expect(txs).toHaveLength(2);
       expect(txs[0]).toEqual({
         id: 'tx-1',
         createdAt: new Date('2026-01-01T12:00:00Z'),
@@ -458,6 +468,20 @@ describe('WalletService', () => {
         memo: 'test memo',
         memoType: 'text',
         paging_token: '12345',
+        amount: '50.0000000',
+        asset: 'XLM',
+        counterparty: 'GBXYZ123',
+      });
+      expect(txs[1]).toEqual({
+        id: 'tx-2',
+        createdAt: new Date('2026-01-02T12:00:00Z'),
+        type: 'create_account',
+        successful: true,
+        feeCharged: '100',
+        paging_token: '12346',
+        amount: '10000.0000000',
+        asset: 'native',
+        counterparty: 'GBFRIENDBOT',
       });
     });
 
@@ -494,7 +518,7 @@ describe('WalletService', () => {
       });
     });
 
-    it('should throw 400 WALLET_HAS_BALANCE when wallet has non-zero balance on Horizon', async () => {
+    it('should throw 400 WALLET_HAS_BALANCE when wallet has non-zero transferable native balance on Horizon', async () => {
       mockUserFindUnique.mockResolvedValue({
         id: 'user-1',
         passwordHash: 'hashed_password',
@@ -508,6 +532,7 @@ describe('WalletService', () => {
       });
 
       mockLoadAccount.mockResolvedValue({
+        subentry_count: 0,
         balances: [
           {
             asset_type: 'native',
@@ -526,7 +551,45 @@ describe('WalletService', () => {
       expect(mockWalletUpdate).not.toHaveBeenCalled();
     });
 
-    it('should soft-delete wallet when balance is 0 and password matches', async () => {
+    it('should throw 400 WALLET_HAS_BALANCE when wallet has non-native token balance on Horizon', async () => {
+      mockUserFindUnique.mockResolvedValue({
+        id: 'user-1',
+        passwordHash: 'hashed_password',
+      });
+      mockAuthVerifyPassword.mockResolvedValue(true);
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-1',
+        userId: 'user-1',
+        publicKey: mockPublicKey,
+        isActive: true,
+      });
+
+      mockLoadAccount.mockResolvedValue({
+        subentry_count: 1,
+        balances: [
+          {
+            asset_type: 'native',
+            balance: '1.5000000', // equals base reserve (2+1)*0.5 = 1.5
+          },
+          {
+            asset_type: 'credit_alphanum4',
+            asset_code: 'USDC',
+            balance: '25.0000000',
+          },
+        ],
+      });
+
+      await expect(
+        WalletService.deleteWallet('wallet-1', 'user-1', { password: 'correctpassword' })
+      ).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringContaining('WALLET_HAS_BALANCE'),
+      });
+
+      expect(mockWalletUpdate).not.toHaveBeenCalled();
+    });
+
+    it('should soft-delete wallet when native balance equals base reserve (1.0 XLM) and password matches', async () => {
       mockUserFindUnique.mockResolvedValue({
         id: 'user-1',
         passwordHash: 'hashed_password',
@@ -541,10 +604,11 @@ describe('WalletService', () => {
       });
 
       mockLoadAccount.mockResolvedValue({
+        subentry_count: 0,
         balances: [
           {
             asset_type: 'native',
-            balance: '0.0000000',
+            balance: '1.0000000',
           },
         ],
       });
@@ -562,9 +626,6 @@ describe('WalletService', () => {
       });
       expect(WebhookService.emitEvent).toHaveBeenCalledWith(
         expect.objectContaining({ eventType: 'wallet.archived' })
-      );
-      expect(AuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'wallet.archived', resourceId: 'wallet-1' })
       );
     });
 
