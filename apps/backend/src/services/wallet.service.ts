@@ -43,7 +43,7 @@ async function getRedisClient(): Promise<RedisClient | null> {
   }
 
   if (!redisConnectPromise) {
-    const connectPromise = (async (): Promise<RedisClient | null> => {
+    redisConnectPromise = (async (): Promise<RedisClient | null> => {
       let client: RedisClient | null = null;
       try {
         client = createClient({ url: process.env.REDIS_URL });
@@ -52,9 +52,7 @@ async function getRedisClient(): Promise<RedisClient | null> {
           if (redisClient === client) {
             redisClient = null;
           }
-          if (redisConnectPromise === connectPromise) {
-            redisConnectPromise = null;
-          }
+          redisConnectPromise = null;
           client?.disconnect().catch(() => {});
         });
         await client.connect();
@@ -68,13 +66,10 @@ async function getRedisClient(): Promise<RedisClient | null> {
         if (redisClient === client) {
           redisClient = null;
         }
-        if (redisConnectPromise === connectPromise) {
-          redisConnectPromise = null;
-        }
+        redisConnectPromise = null;
         return null;
       }
     })();
-    redisConnectPromise = connectPromise;
   }
 
   return redisConnectPromise;
@@ -506,7 +501,9 @@ export const WalletService = {
       const account = await horizonServer.loadAccount(wallet.publicKey);
 
       // Base reserve on Stellar is (2 + subentry_count) * 0.5 XLM (1.0 XLM min)
-      const subentries = Number((account as Record<string, unknown>).subentry_count ?? 0);
+      const subentries = Number(
+        (account as unknown as Record<string, unknown>).subentry_count ?? 0
+      );
       const minReserveStroops = BigInt(2 + subentries) * 5_000_000n;
 
       const hasSpendableBalance = account.balances.some((b) => {
