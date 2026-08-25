@@ -82,7 +82,7 @@ describe('WalletController', () => {
       expect(jsonMock).toHaveBeenCalledWith(
         expect.objectContaining({
           success: false,
-          error: 'Validation error',
+          error: { code: 'VALIDATION_ERROR', message: 'Validation error' },
         })
       );
     });
@@ -144,7 +144,7 @@ describe('WalletController', () => {
       expect(statusMock).toHaveBeenCalledWith(404);
       expect(jsonMock).toHaveBeenCalledWith({
         success: false,
-        error: 'Wallet not found',
+        error: { code: 'WALLET_ERROR', message: 'Wallet not found' },
       });
     });
   });
@@ -213,7 +213,7 @@ describe('WalletController', () => {
       expect(jsonMock).toHaveBeenCalledWith(
         expect.objectContaining({
           success: false,
-          error: 'Validation error',
+          error: { code: 'VALIDATION_ERROR', message: 'Validation error' },
         })
       );
     });

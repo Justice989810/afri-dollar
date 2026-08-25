@@ -16,7 +16,7 @@ function handleError(res: Response, error: unknown): void {
   if (error instanceof ZodError) {
     res.status(400).json({
       success: false,
-      error: 'Validation error',
+      error: { code: 'VALIDATION_ERROR', message: 'Validation error' },
       details: error.errors.map((err) => ({
         field: err.path.join('.'),
         message: err.message,
@@ -28,7 +28,7 @@ function handleError(res: Response, error: unknown): void {
   if (error instanceof AppError) {
     res.status(error.status).json({
       success: false,
-      error: error.message,
+      error: { code: 'WALLET_ERROR', message: error.message },
     });
     return;
   }
@@ -37,7 +37,7 @@ function handleError(res: Response, error: unknown): void {
 
   res.status(500).json({
     success: false,
-    error: 'Internal server error',
+    error: { code: 'SERVER_ERROR', message: 'Internal server error' },
   });
 }
 
@@ -45,7 +45,7 @@ function requireUserId(req: AuthRequest, res: Response): string | null {
   if (!req.user?.userId) {
     res.status(401).json({
       success: false,
-      error: 'Unauthorized',
+      error: { code: 'AUTH_ERROR', message: 'Unauthorized' },
     });
     return null;
   }

@@ -90,6 +90,7 @@ describe('Wallet routes (integration)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.REDIS_URL;
     WalletService.clearCacheForTesting();
   });
 

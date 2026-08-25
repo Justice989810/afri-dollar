@@ -22,7 +22,6 @@ walletRouter.use(authMiddleware);
  */
 walletRouter.post(
   '/',
-  ipPreAuthRateLimiter,
   sensitiveRateLimiter,
   validate(createWalletSchema),
   (req, res, next) => {
@@ -35,7 +34,6 @@ walletRouter.post(
  */
 walletRouter.post(
   '/create',
-  ipPreAuthRateLimiter,
   sensitiveRateLimiter,
   validate(createWalletSchema),
   (req, res, next) => {

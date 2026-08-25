@@ -32,6 +32,20 @@ type RedisClient = ReturnType<typeof createClient>;
 let redisClient: RedisClient | null = null;
 let redisConnectPromise: Promise<RedisClient | null> | null = null;
 const memoryCache = new Map<string, { value: string; expiresAt: number }>();
+const MEMORY_CACHE_MAX_ENTRIES = 5000;
+
+function pruneMemoryCache(): void {
+  const now = Date.now();
+  for (const [key, item] of memoryCache) {
+    if (now > item.expiresAt) memoryCache.delete(key);
+  }
+
+  while (memoryCache.size >= MEMORY_CACHE_MAX_ENTRIES) {
+    const oldest = memoryCache.keys().next();
+    if (oldest.done) break;
+    memoryCache.delete(oldest.value);
+  }
+}
 
 async function getRedisClient(): Promise<RedisClient | null> {
   if (!process.env.REDIS_URL) {
@@ -105,6 +119,7 @@ async function setToCache(key: string, value: unknown, ttlSeconds: number): Prom
       return;
     }
 
+    pruneMemoryCache();
     memoryCache.set(key, {
       value: serialized,
       expiresAt: Date.now() + ttlSeconds * 1000,
@@ -475,6 +490,14 @@ export const WalletService = {
       throw new AppError(404, 'User not found');
     }
 
+    const wallet = await prisma.wallet.findUnique({
+      where: { id: walletId },
+    });
+
+    if (!wallet || wallet.userId !== userId || !wallet.isActive) {
+      throw new AppError(404, 'Wallet not found');
+    }
+
     if (!confirmation.password) {
       throw new AppError(400, 'Password confirmation is required');
     }
@@ -485,14 +508,6 @@ export const WalletService = {
     const isMatch = await AuthService.verifyPassword(confirmation.password, user.passwordHash);
     if (!isMatch) {
       throw new AppError(400, 'Invalid password confirmation');
-    }
-
-    const wallet = await prisma.wallet.findUnique({
-      where: { id: walletId },
-    });
-
-    if (!wallet || wallet.userId !== userId || !wallet.isActive) {
-      throw new AppError(404, 'Wallet not found');
     }
 
     // Check real-time balance on Stellar Horizon (not cached value)

@@ -508,6 +508,11 @@ describe('WalletService', () => {
         id: 'user-1',
         passwordHash: 'hashed_password',
       });
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-1',
+        userId: 'user-1',
+        isActive: true,
+      });
       mockAuthVerifyPassword.mockResolvedValue(false);
 
       await expect(
@@ -515,6 +520,59 @@ describe('WalletService', () => {
       ).rejects.toMatchObject({
         status: 400,
         message: 'Invalid password confirmation',
+      });
+    });
+
+    it('should return 404 before verifying a password for an unavailable wallet', async () => {
+      mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hashed_password' });
+      mockWalletFindUnique.mockResolvedValue(null);
+
+      await expect(
+        WalletService.deleteWallet('wallet-none', 'user-1', { password: 'wrongpassword' })
+      ).rejects.toMatchObject({ status: 404, message: 'Wallet not found' });
+
+      expect(mockAuthVerifyPassword).not.toHaveBeenCalled();
+    });
+
+    it('should map Horizon balance failures to a fixed 502 error', async () => {
+      mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hashed_password' });
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-1', userId: 'user-1', publicKey: mockPublicKey, isActive: true,
+      });
+      mockAuthVerifyPassword.mockResolvedValue(true);
+      mockLoadAccount.mockRejectedValue(new Error('connect ECONNREFUSED horizon.internal:8000'));
+
+      await expect(WalletService.getWalletBalances('wallet-1', 'user-1')).rejects.toMatchObject({
+        status: 502,
+        message: 'Failed to fetch account balances from Stellar',
+      });
+    });
+
+    it('should map Horizon transaction failures to a fixed 502 error', async () => {
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-1', userId: 'user-1', publicKey: mockPublicKey, isActive: true,
+      });
+      mockGetAccountTransactions.mockRejectedValue(new Error('horizon.internal:8000 leaked detail'));
+
+      await expect(WalletService.getWalletTransactions('wallet-1', 'user-1')).rejects.toMatchObject({
+        status: 502,
+        message: 'Failed to fetch account transactions',
+      });
+    });
+
+    it('should map Horizon delete balance failures to a fixed 502 error', async () => {
+      mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hashed_password' });
+      mockWalletFindUnique.mockResolvedValue({
+        id: 'wallet-1', userId: 'user-1', publicKey: mockPublicKey, isActive: true,
+      });
+      mockAuthVerifyPassword.mockResolvedValue(true);
+      mockLoadAccount.mockRejectedValue(new Error('horizon.internal:8000 leaked detail'));
+
+      await expect(
+        WalletService.deleteWallet('wallet-1', 'user-1', { password: 'correctpassword' })
+      ).rejects.toMatchObject({
+        status: 502,
+        message: 'Failed to verify wallet balance on Stellar',
       });
     });
 
