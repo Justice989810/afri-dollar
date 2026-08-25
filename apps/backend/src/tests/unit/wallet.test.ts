@@ -537,7 +537,10 @@ describe('WalletService', () => {
     it('should map Horizon balance failures to a fixed 502 error', async () => {
       mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hashed_password' });
       mockWalletFindUnique.mockResolvedValue({
-        id: 'wallet-1', userId: 'user-1', publicKey: mockPublicKey, isActive: true,
+        id: 'wallet-1',
+        userId: 'user-1',
+        publicKey: mockPublicKey,
+        isActive: true,
       });
       mockAuthVerifyPassword.mockResolvedValue(true);
       mockLoadAccount.mockRejectedValue(new Error('connect ECONNREFUSED horizon.internal:8000'));
@@ -550,20 +553,30 @@ describe('WalletService', () => {
 
     it('should map Horizon transaction failures to a fixed 502 error', async () => {
       mockWalletFindUnique.mockResolvedValue({
-        id: 'wallet-1', userId: 'user-1', publicKey: mockPublicKey, isActive: true,
+        id: 'wallet-1',
+        userId: 'user-1',
+        publicKey: mockPublicKey,
+        isActive: true,
       });
-      mockGetAccountTransactions.mockRejectedValue(new Error('horizon.internal:8000 leaked detail'));
+      mockGetAccountTransactions.mockRejectedValue(
+        new Error('horizon.internal:8000 leaked detail')
+      );
 
-      await expect(WalletService.getWalletTransactions('wallet-1', 'user-1')).rejects.toMatchObject({
-        status: 502,
-        message: 'Failed to fetch account transactions',
-      });
+      await expect(WalletService.getWalletTransactions('wallet-1', 'user-1')).rejects.toMatchObject(
+        {
+          status: 502,
+          message: 'Failed to fetch account transactions',
+        }
+      );
     });
 
     it('should map Horizon delete balance failures to a fixed 502 error', async () => {
       mockUserFindUnique.mockResolvedValue({ id: 'user-1', passwordHash: 'hashed_password' });
       mockWalletFindUnique.mockResolvedValue({
-        id: 'wallet-1', userId: 'user-1', publicKey: mockPublicKey, isActive: true,
+        id: 'wallet-1',
+        userId: 'user-1',
+        publicKey: mockPublicKey,
+        isActive: true,
       });
       mockAuthVerifyPassword.mockResolvedValue(true);
       mockLoadAccount.mockRejectedValue(new Error('horizon.internal:8000 leaked detail'));
