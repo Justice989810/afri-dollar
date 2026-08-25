@@ -20,14 +20,9 @@ walletRouter.use(authMiddleware);
  * POST /api/v1/wallet
  * Creates a new Stellar wallet
  */
-walletRouter.post(
-  '/',
-  sensitiveRateLimiter,
-  validate(createWalletSchema),
-  (req, res, next) => {
-    WalletController.create(req, res).catch(next);
-  }
-);
+walletRouter.post('/', sensitiveRateLimiter, validate(createWalletSchema), (req, res, next) => {
+  WalletController.create(req, res).catch(next);
+});
 
 /**
  * POST /api/v1/wallet/create (backward compatibility)

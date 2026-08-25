@@ -1613,11 +1613,15 @@ const swaggerOptions: Options = {
             '200': { description: 'Wallet details' },
             '401': {
               description: 'Unauthorized',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '404': {
               description: 'Wallet not found',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
           },
         },
@@ -1653,15 +1657,21 @@ const swaggerOptions: Options = {
             '200': { description: 'Wallet archived successfully' },
             '400': {
               description: 'Invalid confirmation or wallet has non-zero balance',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '401': {
               description: 'Unauthorized',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '404': {
               description: 'Wallet not found',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '502': { description: 'Failed to verify wallet balance on Stellar Horizon' },
           },
@@ -1686,11 +1696,15 @@ const swaggerOptions: Options = {
             '200': { description: 'Array of wallet balances' },
             '401': {
               description: 'Unauthorized',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '404': {
               description: 'Wallet not found',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '502': { description: 'Failed to fetch balances from Stellar Horizon' },
           },
@@ -1725,11 +1739,15 @@ const swaggerOptions: Options = {
             '200': { description: 'Array of transaction records' },
             '401': {
               description: 'Unauthorized',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '404': {
               description: 'Wallet not found',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              },
             },
             '502': { description: 'Failed to fetch transactions from Stellar Horizon' },
           },
