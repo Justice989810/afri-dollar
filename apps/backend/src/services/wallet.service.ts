@@ -31,6 +31,7 @@ function parseStellarStroops(amount: string): bigint {
 type RedisClient = ReturnType<typeof createClient>;
 let redisClient: RedisClient | null = null;
 let redisConnectPromise: Promise<RedisClient | null> | null = null;
+let redisConnectionGeneration = 0;
 const memoryCache = new Map<string, { value: string; expiresAt: number }>();
 const MEMORY_CACHE_MAX_ENTRIES = 5000;
 
@@ -57,19 +58,25 @@ async function getRedisClient(): Promise<RedisClient | null> {
   }
 
   if (!redisConnectPromise) {
+    const connectionGeneration = ++redisConnectionGeneration;
     redisConnectPromise = (async (): Promise<RedisClient | null> => {
       let client: RedisClient | null = null;
       try {
         client = createClient({ url: process.env.REDIS_URL });
         client.on('error', (err) => {
           console.error('Redis wallet cache error:', err);
-          if (redisClient === client) {
-            redisClient = null;
+          if (redisConnectionGeneration === connectionGeneration) {
+            redisConnectionGeneration++;
+            if (redisClient === client) redisClient = null;
+            redisConnectPromise = null;
           }
-          redisConnectPromise = null;
           client?.disconnect().catch(() => {});
         });
         await client.connect();
+        if (redisConnectionGeneration !== connectionGeneration) {
+          client.disconnect().catch(() => {});
+          return null;
+        }
         redisClient = client;
         return client;
       } catch (error) {
@@ -77,10 +84,11 @@ async function getRedisClient(): Promise<RedisClient | null> {
         if (client) {
           client.disconnect().catch(() => {});
         }
-        if (redisClient === client) {
-          redisClient = null;
+        if (redisConnectionGeneration === connectionGeneration) {
+          redisConnectionGeneration++;
+          if (redisClient === client) redisClient = null;
+          redisConnectPromise = null;
         }
-        redisConnectPromise = null;
         return null;
       }
     })();
