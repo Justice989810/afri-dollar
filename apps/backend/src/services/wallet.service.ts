@@ -3,7 +3,18 @@ import { createClient } from 'redis';
 
 import prisma from '../config/database';
 import { AppError } from '../types';
-import type { CreateWalletOptions, WalletWithKeys } from '../types';
+import type {
+  CreateWalletOptions,
+  DeleteWalletRequest,
+  ListWalletsOptions,
+  PaginatedWallets,
+  Wallet,
+  WalletBalance,
+  WalletNetwork,
+  WalletTransaction,
+  WalletType,
+  WalletWithKeys,
+} from '../types';
 import type { PaymentRecord } from '../types/transaction.types';
 import { encrypt } from '../utils/crypto';
 
@@ -220,6 +231,245 @@ export const WalletService = {
       updatedAt: wallet.updatedAt,
       secretKey,
     };
+  },
+
+  async listWallets(options: ListWalletsOptions): Promise<PaginatedWallets> {
+    const page = options.page && options.page > 0 ? options.page : 1;
+    const limit = options.limit && options.limit > 0 ? Math.min(options.limit, 100) : 20;
+    const skip = (page - 1) * limit;
+    const where: {
+      userId: string;
+      isActive: boolean;
+      walletType?: string;
+      network?: string;
+    } = { userId: options.userId, isActive: true };
+
+    if (options.walletType) where.walletType = options.walletType;
+    if (options.network) where.network = options.network;
+
+    const [wallets, total] = await Promise.all([
+      prisma.wallet.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+      prisma.wallet.count({ where }),
+    ]);
+
+    const data: Wallet[] = wallets.map((wallet) => ({
+      id: wallet.id,
+      userId: wallet.userId,
+      walletType: wallet.walletType as WalletType,
+      network: wallet.network as WalletNetwork,
+      publicKey: wallet.publicKey,
+      status: wallet.isActive ? 'active' : 'archived',
+      createdAt: wallet.createdAt,
+      updatedAt: wallet.updatedAt,
+    }));
+
+    return {
+      data,
+      pagination: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
+    };
+  },
+
+  async getWalletById(walletId: string, userId: string): Promise<Wallet> {
+    const wallet = await prisma.wallet.findUnique({
+      where: { id: walletId },
+      include: { balances: true },
+    });
+
+    if (!wallet || wallet.userId !== userId || !wallet.isActive) {
+      throw new AppError(404, 'Wallet not found');
+    }
+
+    let lastKnownBalance: string | undefined;
+    const cachedBalances = await getFromCache<WalletBalance[]>(getBalanceCacheKey(walletId));
+    const nativeBalance = cachedBalances?.find((balance) => balance.asset_type === 'native');
+    if (nativeBalance) lastKnownBalance = nativeBalance.balance;
+
+    if (!lastKnownBalance && wallet.balances.length > 0) {
+      const dbNative = wallet.balances.find(
+        (balance) => balance.assetCode === 'XLM' || balance.assetCode === 'native'
+      );
+      if (dbNative) lastKnownBalance = dbNative.balance;
+    }
+
+    return {
+      id: wallet.id,
+      userId: wallet.userId,
+      walletType: wallet.walletType as WalletType,
+      network: wallet.network as WalletNetwork,
+      publicKey: wallet.publicKey,
+      status: wallet.isActive ? 'active' : 'archived',
+      createdAt: wallet.createdAt,
+      updatedAt: wallet.updatedAt,
+      lastKnownBalance,
+    };
+  },
+
+  async getWalletBalances(walletId: string, userId: string): Promise<WalletBalance[]> {
+    const wallet = await prisma.wallet.findUnique({ where: { id: walletId } });
+    if (!wallet || wallet.userId !== userId || !wallet.isActive) {
+      throw new AppError(404, 'Wallet not found');
+    }
+
+    const cacheKey = getBalanceCacheKey(walletId);
+    const cached = await getFromCache<WalletBalance[]>(cacheKey);
+    if (cached) return cached;
+
+    let balances: WalletBalance[] = [];
+    try {
+      const account = await StellarService.getHorizonServer().loadAccount(wallet.publicKey);
+      balances = account.balances
+        .filter(
+          (balance) =>
+            balance.asset_type === 'native' ||
+            balance.asset_type === 'credit_alphanum4' ||
+            balance.asset_type === 'credit_alphanum12'
+        )
+        .map((balance) => ({
+          asset_type: balance.asset_type,
+          balance: balance.balance,
+          ...('asset_code' in balance && balance.asset_code
+            ? { asset_code: balance.asset_code }
+            : {}),
+          ...('asset_issuer' in balance && balance.asset_issuer
+            ? { asset_issuer: balance.asset_issuer }
+            : {}),
+          ...('buying_liabilities' in balance && balance.buying_liabilities
+            ? { buying_liabilities: balance.buying_liabilities }
+            : {}),
+          ...('selling_liabilities' in balance && balance.selling_liabilities
+            ? { selling_liabilities: balance.selling_liabilities }
+            : {}),
+          ...('limit' in balance && balance.limit ? { limit: balance.limit } : {}),
+        }));
+    } catch (error: unknown) {
+      const response =
+        error && typeof error === 'object' ? (error as { response?: unknown }).response : undefined;
+      const status =
+        response && typeof response === 'object'
+          ? (response as { status?: unknown }).status
+          : undefined;
+      if (status === 404 || (error instanceof AppError && error.status === 404)) {
+        balances = [];
+      } else {
+        console.error('Stellar getWalletBalances error:', error);
+        throw new AppError(502, 'Failed to fetch account balances from Stellar');
+      }
+    }
+
+    await setToCache(cacheKey, balances, 30);
+    return balances;
+  },
+
+  async getWalletTransactions(
+    walletId: string,
+    userId: string,
+    options?: { limit?: number; cursor?: string }
+  ): Promise<WalletTransaction[]> {
+    const wallet = await prisma.wallet.findUnique({ where: { id: walletId } });
+    if (!wallet || wallet.userId !== userId || !wallet.isActive) {
+      throw new AppError(404, 'Wallet not found');
+    }
+
+    try {
+      const records = await StellarService.getAccountTransactions(wallet.publicKey, options);
+      return records.map((record) => {
+        const extra = record as unknown as Record<string, unknown>;
+        const result: WalletTransaction = {
+          id: record.id,
+          createdAt: new Date(record.created_at),
+          type: typeof extra.type === 'string' ? extra.type : 'payment',
+          successful: Boolean(record.successful),
+          feeCharged: record.fee_charged !== undefined ? String(record.fee_charged) : undefined,
+          memo: typeof record.memo === 'string' ? record.memo : undefined,
+          memoType: typeof record.memo_type === 'string' ? record.memo_type : undefined,
+          paging_token: record.paging_token,
+        };
+        if (typeof extra.amount === 'string' || typeof extra.amount === 'number') {
+          result.amount = String(extra.amount);
+        }
+        if (typeof extra.asset === 'string') result.asset = extra.asset;
+        else if (typeof extra.asset_code === 'string') result.asset = extra.asset_code;
+        if (typeof extra.counterparty === 'string') result.counterparty = extra.counterparty;
+        else if (typeof extra.to === 'string') result.counterparty = extra.to;
+        else if (typeof extra.from === 'string') result.counterparty = extra.from;
+        return result;
+      });
+    } catch (error: unknown) {
+      const response =
+        error && typeof error === 'object' ? (error as { response?: unknown }).response : undefined;
+      const status =
+        response && typeof response === 'object'
+          ? (response as { status?: unknown }).status
+          : undefined;
+      if (status === 404) return [];
+      if (error instanceof AppError) throw error;
+      console.error('Stellar getWalletTransactions error:', error);
+      throw new AppError(502, 'Failed to fetch account transactions');
+    }
+  },
+
+  async deleteWallet(
+    walletId: string,
+    userId: string,
+    confirmation: DeleteWalletRequest
+  ): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new AppError(404, 'User not found');
+
+    const wallet = await prisma.wallet.findUnique({ where: { id: walletId } });
+    if (!wallet || wallet.userId !== userId || !wallet.isActive) {
+      throw new AppError(404, 'Wallet not found');
+    }
+    if (!confirmation.password) throw new AppError(400, 'Password confirmation is required');
+    if (!user.passwordHash) throw new AppError(400, 'User password is not set');
+    if (!(await AuthService.verifyPassword(confirmation.password, user.passwordHash))) {
+      throw new AppError(400, 'Invalid password confirmation');
+    }
+
+    try {
+      const account = await StellarService.getHorizonServer().loadAccount(wallet.publicKey);
+      const subentries = Number(
+        (account as unknown as Record<string, unknown>).subentry_count ?? 0
+      );
+      const minReserveStroops = BigInt(2 + subentries) * 5_000_000n;
+      const hasSpendableBalance = account.balances.some((balance) => {
+        const amount = parseStellarStroops(balance.balance);
+        return balance.asset_type === 'native' ? amount > minReserveStroops : amount > 0n;
+      });
+      if (hasSpendableBalance) {
+        throw new AppError(
+          400,
+          'WALLET_HAS_BALANCE: Wallet has a non-zero balance. Please transfer all funds before deleting.'
+        );
+      }
+    } catch (error: unknown) {
+      if (error instanceof AppError) throw error;
+      const response =
+        error && typeof error === 'object' ? (error as { response?: unknown }).response : undefined;
+      const status =
+        response && typeof response === 'object'
+          ? (response as { status?: unknown }).status
+          : undefined;
+      if (status !== 404) {
+        console.error('Stellar verify balance error in deleteWallet:', error);
+        throw new AppError(502, 'Failed to verify wallet balance on Stellar');
+      }
+    }
+
+    await prisma.wallet.update({ where: { id: walletId }, data: { isActive: false } });
+    await WalletService.invalidateBalanceCache(walletId);
+    await WebhookService.emitEvent({
+      eventType: 'wallet.archived',
+      payload: { walletId: wallet.id, publicKey: wallet.publicKey },
+      userId,
+    });
+    await AuditService.log({
+      action: 'wallet.archived',
+      resource: 'wallet',
+      resourceId: wallet.id,
+      userId,
+      metadata: { publicKey: wallet.publicKey, walletType: wallet.walletType },
+    });
   },
 
   /**
