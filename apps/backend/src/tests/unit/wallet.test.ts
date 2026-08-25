@@ -66,6 +66,9 @@ jest.mock('@stellar/stellar-sdk', () => ({
   Keypair: {
     random: jest.fn(),
   },
+  Config: {
+    setTimeout: jest.fn(),
+  },
   Horizon: {
     Server: jest.fn(),
   },
